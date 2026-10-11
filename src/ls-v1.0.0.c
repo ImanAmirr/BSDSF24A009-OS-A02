@@ -1,6 +1,8 @@
+
 /*
- * Programming Assignment 02: ls v1.3.0
- * Default columns, horizontal display (-x), and long listing (-l)
+ * Programming Assignment 02: ls v1.4.0
+ * Default columns, horizontal display (-x), long listing (-l),
+ * and alphabetical sorting using qsort()
  */
 
 #include <stdio.h>
@@ -23,6 +25,15 @@ void print_horizontal(char **filenames, size_t count,
 void print_long_entry(const char *dir, const char *name);
 void get_permissions(mode_t mode, char permissions[]);
 int get_terminal_width(void);
+int compare_names(const void *a, const void *b);
+
+int compare_names(const void *a, const void *b)
+{
+    const char *name1 = *(const char **)a;
+    const char *name2 = *(const char **)b;
+
+    return strcmp(name1, name2);
+}
 
 int main(int argc, char *argv[])
 {
@@ -176,6 +187,9 @@ void do_ls(const char *dir, int horizontal_format)
 
     closedir(dp);
 
+    /* Sort filenames alphabetically */
+    qsort(filenames, count, sizeof(char *), compare_names);
+
     if (count == 0)
     {
         free(filenames);
@@ -288,6 +302,10 @@ void do_long_ls(const char *dir)
     struct stat st;
     struct dirent *entry;
     DIR *dp;
+    char **filenames = NULL;
+    size_t count = 0;
+    size_t capacity = 16;
+    size_t i;
 
     if (lstat(dir, &st) == -1)
     {
@@ -311,20 +329,83 @@ void do_long_ls(const char *dir)
         return;
     }
 
+    filenames = malloc(capacity * sizeof(char *));
+
+    if (filenames == NULL)
+    {
+        perror("malloc");
+        closedir(dp);
+        return;
+    }
+
     errno = 0;
 
     while ((entry = readdir(dp)) != NULL)
     {
+        char *copy;
+        size_t length;
+
         if (entry->d_name[0] == '.')
             continue;
 
-        print_long_entry(dir, entry->d_name);
+        length = strlen(entry->d_name);
+
+        if (count == capacity)
+        {
+            size_t new_capacity = capacity * 2;
+            char **new_filenames =
+                realloc(filenames, new_capacity * sizeof(char *));
+
+            if (new_filenames == NULL)
+            {
+                perror("realloc");
+
+                for (i = 0; i < count; i++)
+                    free(filenames[i]);
+
+                free(filenames);
+                closedir(dp);
+                return;
+            }
+
+            filenames = new_filenames;
+            capacity = new_capacity;
+        }
+
+        copy = malloc(length + 1);
+
+        if (copy == NULL)
+        {
+            perror("malloc");
+
+            for (i = 0; i < count; i++)
+                free(filenames[i]);
+
+            free(filenames);
+            closedir(dp);
+            return;
+        }
+
+        strcpy(copy, entry->d_name);
+        filenames[count] = copy;
+        count++;
     }
 
     if (errno != 0)
         perror("readdir failed");
 
     closedir(dp);
+
+    /* Sort filenames before printing long listings */
+    qsort(filenames, count, sizeof(char *), compare_names);
+
+    for (i = 0; i < count; i++)
+        print_long_entry(dir, filenames[i]);
+
+    for (i = 0; i < count; i++)
+        free(filenames[i]);
+
+    free(filenames);
 }
 
 void print_long_entry(const char *dir, const char *name)

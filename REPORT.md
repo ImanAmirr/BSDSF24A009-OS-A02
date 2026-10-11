@@ -47,3 +47,33 @@ The horizontal printing logic is simpler because the program processes the filen
 The program uses two integer flags, `long_format` and `horizontal_format`, to keep track of the selected display mode. The `getopt()` function recognizes the `-l` and `-x` options. When `-l` is provided, `long_format` is set to 1. When `-x` is provided, `horizontal_format` is set to 1.
 
 In the main function, the program checks these flags to decide which printing function to call. If `-l` is selected, it calls `do_long_ls()`. Otherwise, it calls `do_ls()` with the horizontal-format flag. Inside `do_ls()`, the program calls `print_horizontal()` when `-x` is selected. If neither option is provided, it uses the original down-then-across printing logic. This allows the program to support all three display modes while preserving the previous functionality.
+
+## Feature 5: Alphabetical Sorting (v1.4.0)
+
+### Implementation
+
+The program now sorts filenames alphabetically using the `qsort()` function from the C standard library. A comparison function named `compare_names()` compares two filenames using `strcmp()`.
+
+The filenames are first collected into a dynamically allocated array. The `qsort()` function sorts this array before the filenames are displayed. Alphabetical sorting is supported in the default column display, horizontal display (`-x`), and long listing (`-l`).
+
+### Testing
+
+The program was compiled using `make clean` and `make` without errors or warnings. Sorting was tested by creating three files in an unsorted order: `zebra.txt`, `apple.txt`, and `mango.txt`.
+
+The output showed the filenames in alphabetical order in all three display modes.
+
+### Question 1: Why are all directory entries read into memory before sorting? What are the drawbacks for directories containing millions of files?
+
+All directory entries are read into memory because `qsort()` sorts an array of elements. The program must collect the filenames before sorting them and displaying the results.
+
+For directories containing millions of files, storing all filenames in memory can consume a large amount of RAM. It also requires additional time to allocate memory and copy filenames. If memory is insufficient, allocation may fail. Sorting a large number of filenames also takes additional processing time.
+
+### Question 2: Explain the purpose and signature of the comparison function used by `qsort()`. How does it work, and why are its arguments `const void *`?
+
+The comparison function determines the order of elements during sorting. Its signature is:
+
+`int compare_names(const void *a, const void *b)`
+
+The arguments are `const void *` because `qsort()` is a general-purpose function that can sort arrays containing different data types. The function receives pointers to two array elements. In this program, each element is a `char *`, so the arguments are converted to pointers to filename pointers. The filenames are then compared using `strcmp()`.
+
+The function returns a negative value if the first filename comes before the second, zero if they are equal, and a positive value if the first comes after the second. The `const` qualifier indicates that the comparison function does not modify the elements being compared.
