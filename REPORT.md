@@ -33,3 +33,17 @@ A simple loop through the array prints each filename on the next line, producing
 The `ioctl()` system call is used to obtain information about a terminal. In this program, it is called with `TIOCGWINSZ` to retrieve the terminal window size, including its number of columns. The program uses this width to decide how many filename columns can fit on the screen. If the terminal width cannot be obtained, the program uses a fallback width of 80 characters.
 
 Using only a fixed width would make the output less adaptable. On a narrow terminal, the filenames could extend beyond the screen and wrap onto additional lines. On a wide terminal, the program might use too few columns and leave unnecessary empty space. Detecting the actual terminal width allows the output to adjust to different terminal sizes and more closely resemble the standard `ls` utility.
+
+# Report Questions — Feature 4: ls-v1.3.0
+
+## Question 1: Compare the implementation complexity of the "down then across" (vertical) printing logic versus the "across" (horizontal) printing logic. Which one requires more pre-calculation and why?
+
+The down-then-across printing logic is more complex because it requires calculating the number of columns and rows before printing. The program uses the terminal width and the longest filename to determine how many columns fit on the screen. It then uses the index `row + column * rows` to print the filenames vertically within each column before moving across.
+
+The horizontal printing logic is simpler because the program processes the filenames sequentially from left to right. It keeps track of the current horizontal position and starts a new line when the next filename would exceed the terminal width. Both formats require the filenames and maximum filename length to be collected first, but the vertical format requires additional calculations for rows, columns, and filename indexes.
+
+## Question 2: Describe the strategy you used in your code to manage the different display modes. How did your program decide which function to call for printing?
+
+The program uses two integer flags, `long_format` and `horizontal_format`, to keep track of the selected display mode. The `getopt()` function recognizes the `-l` and `-x` options. When `-l` is provided, `long_format` is set to 1. When `-x` is provided, `horizontal_format` is set to 1.
+
+In the main function, the program checks these flags to decide which printing function to call. If `-l` is selected, it calls `do_long_ls()`. Otherwise, it calls `do_ls()` with the horizontal-format flag. Inside `do_ls()`, the program calls `print_horizontal()` when `-x` is selected. If neither option is provided, it uses the original down-then-across printing logic. This allows the program to support all three display modes while preserving the previous functionality.

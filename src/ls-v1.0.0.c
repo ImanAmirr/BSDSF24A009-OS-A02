@@ -1,7 +1,6 @@
-
 /*
- * Programming Assignment 02: ls v1.2.0
- * Column display (down then across) and long listing
+ * Programming Assignment 02: ls v1.3.0
+ * Default columns, horizontal display (-x), and long listing (-l)
  */
 
 #include <stdio.h>
@@ -17,8 +16,10 @@
 #include <grp.h>
 #include <time.h>
 
-void do_ls(const char *dir);
+void do_ls(const char *dir, int horizontal_format);
 void do_long_ls(const char *dir);
+void print_horizontal(char **filenames, size_t count,
+                      size_t column_width, int terminal_width);
 void print_long_entry(const char *dir, const char *name);
 void get_permissions(mode_t mode, char permissions[]);
 int get_terminal_width(void);
@@ -27,14 +28,18 @@ int main(int argc, char *argv[])
 {
     int opt;
     int long_format = 0;
+    int horizontal_format = 0;
 
-    while ((opt = getopt(argc, argv, "l")) != -1)
+    while ((opt = getopt(argc, argv, "lx")) != -1)
     {
         if (opt == 'l')
             long_format = 1;
+        else if (opt == 'x')
+            horizontal_format = 1;
         else
         {
-            fprintf(stderr, "Usage: %s [-l] [directory ...]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-l] [-x] [directory ...]\n",
+                    argv[0]);
             return 1;
         }
     }
@@ -44,7 +49,7 @@ int main(int argc, char *argv[])
         if (long_format)
             do_long_ls(".");
         else
-            do_ls(".");
+            do_ls(".", horizontal_format);
     }
     else
     {
@@ -56,7 +61,7 @@ int main(int argc, char *argv[])
             if (long_format)
                 do_long_ls(argv[i]);
             else
-                do_ls(argv[i]);
+                do_ls(argv[i], horizontal_format);
 
             if (argc - optind > 1)
                 puts("");
@@ -70,14 +75,14 @@ int get_terminal_width(void)
 {
     struct winsize window;
 
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window) == 0
-        && window.ws_col > 0)
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window) == 0 &&
+        window.ws_col > 0)
         return window.ws_col;
 
     return 80;
 }
 
-void do_ls(const char *dir)
+void do_ls(const char *dir, int horizontal_format)
 {
     DIR *dp;
     struct dirent *entry;
@@ -180,54 +185,102 @@ void do_ls(const char *dir)
     terminal_width = get_terminal_width();
     column_width = max_length + spacing;
 
-    columns = (size_t)terminal_width / column_width;
-
-    if (columns == 0)
-        columns = 1;
-
-    if (columns > count)
-        columns = count;
-
-    rows = (count + columns - 1) / columns;
-
-    /*
-     * Print down each column, then across.
-     * Index: row + column * rows
-     */
-    for (i = 0; i < rows; i++)
+    if (horizontal_format)
     {
-        size_t column;
+        print_horizontal(filenames, count, column_width, terminal_width);
+    }
+    else
+    {
+        columns = (size_t)terminal_width / column_width;
 
-        for (column = 0; column < columns; column++)
+        if (columns == 0)
+            columns = 1;
+
+        if (columns > count)
+            columns = count;
+
+        rows = (count + columns - 1) / columns;
+
+        for (i = 0; i < rows; i++)
         {
-            size_t index = i + column * rows;
+            size_t column;
 
-            if (index < count)
+            for (column = 0; column < columns; column++)
             {
-                printf("%s", filenames[index]);
+                size_t index = i + column * rows;
 
-                if (column + 1 < columns
-                    && index + rows < count)
+                if (index < count)
                 {
-                    size_t length = strlen(filenames[index]);
-                    size_t padding = column_width - length;
+                    printf("%s", filenames[index]);
 
-                    while (padding > 0)
+                    if (column + 1 < columns && index + rows < count)
                     {
-                        putchar(' ');
-                        padding--;
+                        size_t length = strlen(filenames[index]);
+                        size_t padding = column_width - length;
+
+                        while (padding > 0)
+                        {
+                            putchar(' ');
+                            padding--;
+                        }
                     }
                 }
             }
-        }
 
-        putchar('\n');
+            putchar('\n');
+        }
     }
 
     for (i = 0; i < count; i++)
         free(filenames[i]);
 
     free(filenames);
+}
+
+void print_horizontal(char **filenames, size_t count,
+                      size_t column_width, int terminal_width)
+{
+    size_t i;
+    size_t current_position = 0;
+
+    for (i = 0; i < count; i++)
+    {
+        size_t length = strlen(filenames[i]);
+        size_t padding = column_width - length;
+
+        if (current_position > 0 &&
+            current_position + column_width > (size_t)terminal_width)
+        {
+            putchar('\n');
+            current_position = 0;
+        }
+
+        printf("%s", filenames[i]);
+        current_position += length;
+
+        if (i + 1 < count)
+        {
+            if (current_position + padding <= (size_t)terminal_width)
+            {
+                while (padding > 0)
+                {
+                    putchar(' ');
+                    padding--;
+                }
+
+                current_position += column_width - length;
+            }
+            else
+            {
+                putchar('\n');
+                current_position = 0;
+            }
+        }
+        else
+        {
+            putchar('\n');
+        }
+    }
 }
 
 void do_long_ls(const char *dir)
