@@ -1,12 +1,13 @@
 
 /*
- * Programming Assignment 02: ls v1.5.0
+ * Programming Assignment 02: ls v1.6.0
  * Features:
  * 1. Default column display (down-then-across)
  * 2. Long listing (-l)
  * 3. Horizontal display (-x)
  * 4. Alphabetical sorting
  * 5. Colorized output based on file type
+ * 6. Recursive listing (-R)
  */
 
 #include <stdio.h>
@@ -31,11 +32,12 @@
 #define COLOR_PINK    "\033[0;95m"
 #define COLOR_REVERSE "\033[7m"
 
-void do_ls(const char *dir, int horizontal_format);
-void do_long_ls(const char *dir);
+void do_ls(const char *dir, int horizontal_format, int recursive_flag);
+void do_long_ls(const char *dir, int recursive_flag);
 
-void print_horizontal(char **filenames, size_t count,
-                      size_t column_width, int terminal_width);
+void print_horizontal(const char *dir, char **filenames,
+                      size_t count, size_t column_width,
+                      int terminal_width);
 
 void print_long_entry(const char *dir, const char *name);
 void get_permissions(mode_t mode, char permissions[]);
@@ -61,69 +63,42 @@ int is_archive(const char *name)
     const char *extension = strrchr(name, '.');
 
     if (extension == NULL)
-    {
         return 0;
-    }
 
     if (strcmp(extension, ".tar") == 0 ||
         strcmp(extension, ".gz") == 0 ||
         strcmp(extension, ".zip") == 0)
-    {
         return 1;
-    }
 
     return 0;
 }
 
 /* Print a filename using a color based on its file type */
-
 void print_colored_name_from_mode(const char *name, mode_t mode)
 {
     const char *color = COLOR_RESET;
     const char *extension = strrchr(name, '.');
 
     if (S_ISLNK(mode))
-    {
         color = COLOR_PINK;
-    }
     else if (!S_ISDIR(mode) && !S_ISREG(mode))
-    {
         color = COLOR_REVERSE;
-    }
     else if (S_ISDIR(mode))
-    {
         color = COLOR_BLUE;
-    }
     else if (is_archive(name))
-    {
         color = COLOR_RED;
-    }
     else if (extension != NULL && strcmp(extension, ".sh") == 0)
-    {
         color = COLOR_GREEN;
-    }
     else
-    {
-        /*
-         * Windows-mounted filesystems may report every file
-         * as executable. Keep ordinary files in the default
-         * color on this filesystem.
-         */
         color = COLOR_RESET;
-    }
 
     if (isatty(STDOUT_FILENO))
-    {
         printf("%s%s%s", color, name, COLOR_RESET);
-    }
     else
-    {
         printf("%s", name);
-    }
 }
 
-
-/* Get file information and print a colored filename */
+/* Construct a path and print the filename in its appropriate color */
 void print_colored_name(const char *dir, const char *name)
 {
     char path[PATH_MAX];
@@ -131,13 +106,9 @@ void print_colored_name(const char *dir, const char *name)
     int result;
 
     if (strcmp(dir, ".") == 0)
-    {
         result = snprintf(path, sizeof(path), "%s", name);
-    }
     else
-    {
         result = snprintf(path, sizeof(path), "%s/%s", dir, name);
-    }
 
     if (result < 0 || (size_t)result >= sizeof(path))
     {
@@ -145,7 +116,6 @@ void print_colored_name(const char *dir, const char *name)
         return;
     }
 
-    /* lstat identifies symbolic links without following them */
     if (lstat(path, &st) == -1)
     {
         printf("%s", name);
@@ -162,9 +132,7 @@ int get_terminal_width(void)
 
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 &&
         ws.ws_col > 0)
-    {
         return ws.ws_col;
-    }
 
     return 80;
 }
@@ -199,7 +167,6 @@ void get_permissions(mode_t mode, char permissions[])
     permissions[8] = (mode & S_IWOTH) ? 'w' : '-';
     permissions[9] = (mode & S_IXOTH) ? 'x' : '-';
 
-    /* Handle special permission bits */
     if (mode & S_ISUID)
         permissions[3] = (mode & S_IXUSR) ? 's' : 'S';
 
@@ -212,9 +179,10 @@ void get_permissions(mode_t mode, char permissions[])
     permissions[10] = '\0';
 }
 
-/* Print filenames left-to-right, wrapping when necessary */
-void print_horizontal(char **filenames, size_t count,
-                      size_t column_width, int terminal_width)
+/* Print filenames horizontally, wrapping when necessary */
+void print_horizontal(const char *dir, char **filenames,
+                      size_t count, size_t column_width,
+                      int terminal_width)
 {
     size_t i;
     size_t current_width = 0;
@@ -225,9 +193,7 @@ void print_horizontal(char **filenames, size_t count,
         size_t needed_width = name_length;
 
         if (current_width > 0)
-        {
             needed_width += 2;
-        }
 
         if (current_width > 0 &&
             current_width + needed_width > (size_t)terminal_width)
@@ -242,41 +208,35 @@ void print_horizontal(char **filenames, size_t count,
             current_width += 2;
         }
 
-        print_colored_name(".", filenames[i]);
+        print_colored_name(dir, filenames[i]);
         current_width += name_length;
     }
 
     if (count > 0)
-    {
         printf("\n");
-    }
 
     (void)column_width;
 }
 
-/* Display directory entries in columns or horizontally */
-void do_ls(const char *dir, int horizontal_format)
+/* Read directory entries into a dynamically allocated array */
+char **read_filenames(const char *dir, size_t *count,
+                      size_t *max_length)
 {
     DIR *dp;
     struct dirent *entry;
-
-    char **filenames = NULL;
-    size_t count = 0;
+    char **filenames;
     size_t capacity = 10;
-    size_t max_length = 0;
     size_t i;
 
-    int terminal_width;
-    size_t column_width;
-    size_t columns;
-    size_t rows;
+    *count = 0;
+    *max_length = 0;
 
     dp = opendir(dir);
 
     if (dp == NULL)
     {
         perror(dir);
-        return;
+        return NULL;
     }
 
     filenames = malloc(capacity * sizeof(char *));
@@ -285,20 +245,17 @@ void do_ls(const char *dir, int horizontal_format)
     {
         perror("malloc");
         closedir(dp);
-        return;
+        return NULL;
     }
 
-    /* Read visible filenames */
     while ((entry = readdir(dp)) != NULL)
     {
         size_t name_length;
 
         if (entry->d_name[0] == '.')
-        {
             continue;
-        }
 
-        if (count == capacity)
+        if (*count == capacity)
         {
             size_t new_capacity = capacity * 2;
             char **temp = realloc(filenames,
@@ -308,123 +265,180 @@ void do_ls(const char *dir, int horizontal_format)
             {
                 perror("realloc");
 
-                for (i = 0; i < count; i++)
-                {
+                for (i = 0; i < *count; i++)
                     free(filenames[i]);
-                }
 
                 free(filenames);
                 closedir(dp);
-                return;
+                *count = 0;
+                return NULL;
             }
 
             filenames = temp;
             capacity = new_capacity;
         }
 
-        filenames[count] = malloc(strlen(entry->d_name) + 1);
+        filenames[*count] = malloc(strlen(entry->d_name) + 1);
 
-        if (filenames[count] == NULL)
+        if (filenames[*count] == NULL)
         {
             perror("malloc");
 
-            for (i = 0; i < count; i++)
-            {
+            for (i = 0; i < *count; i++)
                 free(filenames[i]);
-            }
 
             free(filenames);
             closedir(dp);
-            return;
+            *count = 0;
+            return NULL;
         }
 
-        strcpy(filenames[count], entry->d_name);
+        strcpy(filenames[*count], entry->d_name);
 
         name_length = strlen(entry->d_name);
 
-        if (name_length > max_length)
-        {
-            max_length = name_length;
-        }
+        if (name_length > *max_length)
+            *max_length = name_length;
 
-        count++;
+        (*count)++;
     }
 
     closedir(dp);
 
-    /* Sort filenames alphabetically */
-    qsort(filenames, count, sizeof(char *), compare_names);
+    qsort(filenames, *count, sizeof(char *), compare_names);
 
-    if (count == 0)
-    {
-        free(filenames);
+    return filenames;
+}
+
+/* Free the allocated filename array */
+void free_filenames(char **filenames, size_t count)
+{
+    size_t i;
+
+    for (i = 0; i < count; i++)
+        free(filenames[i]);
+
+    free(filenames);
+}
+
+/* Display a directory in columns or horizontally */
+void do_ls(const char *dir, int horizontal_format, int recursive_flag)
+{
+    struct stat st;
+    char **filenames;
+    size_t count;
+    size_t max_length;
+    size_t i;
+    int terminal_width;
+    size_t column_width;
+    size_t columns;
+    size_t rows;
+
+    if (recursive_flag)
+        printf("%s:\n", dir);
+
+    filenames = read_filenames(dir, &count, &max_length);
+
+    if (filenames == NULL)
         return;
-    }
 
-    terminal_width = get_terminal_width();
-    column_width = max_length + 2;
-
-    if (horizontal_format)
+    if (count > 0)
     {
-        print_horizontal(filenames, count,
-                         column_width, terminal_width);
-    }
-    else
-    {
-        /* Default display: down-then-across */
-        columns = (size_t)terminal_width / column_width;
+        terminal_width = get_terminal_width();
+        column_width = max_length + 2;
 
-        if (columns == 0)
+        if (horizontal_format)
         {
-            columns = 1;
+            print_horizontal(dir, filenames, count,
+                             column_width, terminal_width);
         }
-
-        if (columns > count)
+        else
         {
-            columns = count;
-        }
+            columns = (size_t)terminal_width / column_width;
 
-        rows = (count + columns - 1) / columns;
+            if (columns == 0)
+                columns = 1;
 
-        for (i = 0; i < rows; i++)
-        {
-            size_t col;
+            if (columns > count)
+                columns = count;
 
-            for (col = 0; col < columns; col++)
+            rows = (count + columns - 1) / columns;
+
+            for (i = 0; i < rows; i++)
             {
-                size_t index = col * rows + i;
+                size_t col;
 
-                if (index < count)
+                for (col = 0; col < columns; col++)
                 {
-                    size_t name_length = strlen(filenames[index]);
+                    size_t index = col * rows + i;
 
-                    print_colored_name(dir, filenames[index]);
-
-                    if (col < columns - 1 &&
-                        index + rows < count)
+                    if (index < count)
                     {
-                        size_t spaces = column_width - name_length;
+                        size_t name_length = strlen(filenames[index]);
 
-                        while (spaces > 0)
+                        print_colored_name(dir, filenames[index]);
+
+                        if (col < columns - 1 &&
+                            index + rows < count)
                         {
-                            printf(" ");
-                            spaces--;
+                            size_t spaces = column_width - name_length;
+
+                            while (spaces > 0)
+                            {
+                                printf(" ");
+                                spaces--;
+                            }
                         }
                     }
                 }
-            }
 
-            printf("\n");
+                printf("\n");
+            }
         }
     }
 
-    /* Free allocated memory */
-    for (i = 0; i < count; i++)
+    /*
+     * Recursive step:
+     * Construct each entry's full path, check its metadata,
+     * and recurse into directories other than "." and "..".
+     */
+    if (recursive_flag)
     {
-        free(filenames[i]);
+        for (i = 0; i < count; i++)
+        {
+            char path[PATH_MAX];
+            int result;
+
+            if (strcmp(dir, "/") == 0)
+                result = snprintf(path, sizeof(path), "/%s",
+                                  filenames[i]);
+            else
+                result = snprintf(path, sizeof(path), "%s/%s",
+                                  dir, filenames[i]);
+
+            if (result < 0 || (size_t)result >= sizeof(path))
+            {
+                fprintf(stderr, "Path is too long: %s\n",
+                        filenames[i]);
+                continue;
+            }
+
+            if (lstat(path, &st) == -1)
+            {
+                perror(path);
+                continue;
+            }
+
+            /* S_ISDIR is false for symbolic links to directories */
+            if (S_ISDIR(st.st_mode))
+            {
+                printf("\n");
+                do_ls(path, horizontal_format, recursive_flag);
+            }
+        }
     }
 
-    free(filenames);
+    free_filenames(filenames, count);
 }
 
 /* Print one entry in long-listing format */
@@ -433,22 +447,16 @@ void print_long_entry(const char *dir, const char *name)
     char path[PATH_MAX];
     char permissions[11];
     char time_string[20];
-
     struct stat st;
     struct passwd *owner;
     struct group *group;
     struct tm *time_info;
-
     int result;
 
     if (strcmp(dir, ".") == 0)
-    {
         result = snprintf(path, sizeof(path), "%s", name);
-    }
     else
-    {
         result = snprintf(path, sizeof(path), "%s/%s", dir, name);
-    }
 
     if (result < 0 || (size_t)result >= sizeof(path))
     {
@@ -466,18 +474,13 @@ void print_long_entry(const char *dir, const char *name)
 
     owner = getpwuid(st.st_uid);
     group = getgrgid(st.st_gid);
-
     time_info = localtime(&st.st_mtime);
 
     if (time_info != NULL)
-    {
-        strftime(time_string, sizeof(time_string),
-                 "%b %d %H:%M", time_info);
-    }
+        strftime(time_string, sizeof(time_string), "%b %d %H:%M",
+                 time_info);
     else
-    {
         strcpy(time_string, "Unknown time");
-    }
 
     printf("%s %2lu %-8s %-8s %8ld %s ",
            permissions,
@@ -487,22 +490,17 @@ void print_long_entry(const char *dir, const char *name)
            (long)st.st_size,
            time_string);
 
-    /* Colorize the filename using its existing stat information */
     print_colored_name_from_mode(name, st.st_mode);
-
     printf("\n");
 }
 
 /* Display a directory in long-listing format */
-void do_long_ls(const char *dir)
+void do_long_ls(const char *dir, int recursive_flag)
 {
-    DIR *dp;
-    struct dirent *entry;
     struct stat st;
-
-    char **filenames = NULL;
-    size_t count = 0;
-    size_t capacity = 10;
+    char **filenames;
+    size_t count;
+    size_t max_length;
     size_t i;
 
     if (lstat(dir, &st) == -1)
@@ -511,94 +509,59 @@ void do_long_ls(const char *dir)
         return;
     }
 
-    /* If the path is not a directory, list that file */
     if (!S_ISDIR(st.st_mode))
     {
         print_long_entry(".", dir);
         return;
     }
 
-    dp = opendir(dir);
+    if (recursive_flag)
+        printf("%s:\n", dir);
 
-    if (dp == NULL)
-    {
-        perror(dir);
-        return;
-    }
-
-    filenames = malloc(capacity * sizeof(char *));
+    filenames = read_filenames(dir, &count, &max_length);
 
     if (filenames == NULL)
-    {
-        perror("malloc");
-        closedir(dp);
         return;
-    }
-
-    /* Read visible filenames */
-    while ((entry = readdir(dp)) != NULL)
-    {
-        if (entry->d_name[0] == '.')
-        {
-            continue;
-        }
-
-        if (count == capacity)
-        {
-            size_t new_capacity = capacity * 2;
-            char **temp = realloc(filenames,
-                                  new_capacity * sizeof(char *));
-
-            if (temp == NULL)
-            {
-                perror("realloc");
-
-                for (i = 0; i < count; i++)
-                {
-                    free(filenames[i]);
-                }
-
-                free(filenames);
-                closedir(dp);
-                return;
-            }
-
-            filenames = temp;
-            capacity = new_capacity;
-        }
-
-        filenames[count] = malloc(strlen(entry->d_name) + 1);
-
-        if (filenames[count] == NULL)
-        {
-            perror("malloc");
-
-            for (i = 0; i < count; i++)
-            {
-                free(filenames[i]);
-            }
-
-            free(filenames);
-            closedir(dp);
-            return;
-        }
-
-        strcpy(filenames[count], entry->d_name);
-        count++;
-    }
-
-    closedir(dp);
-
-    /* Sort before displaying */
-    qsort(filenames, count, sizeof(char *), compare_names);
 
     for (i = 0; i < count; i++)
-    {
         print_long_entry(dir, filenames[i]);
-        free(filenames[i]);
+
+    if (recursive_flag)
+    {
+        for (i = 0; i < count; i++)
+        {
+            char path[PATH_MAX];
+            int result;
+
+            if (strcmp(dir, "/") == 0)
+                result = snprintf(path, sizeof(path), "/%s",
+                                  filenames[i]);
+            else
+                result = snprintf(path, sizeof(path), "%s/%s",
+                                  dir, filenames[i]);
+
+            if (result < 0 || (size_t)result >= sizeof(path))
+            {
+                fprintf(stderr, "Path is too long: %s\n",
+                        filenames[i]);
+                continue;
+            }
+
+            if (lstat(path, &st) == -1)
+            {
+                perror(path);
+                continue;
+            }
+
+            if (S_ISDIR(st.st_mode))
+            {
+                printf("\n");
+                do_long_ls(path, recursive_flag);
+            }
+        }
     }
 
-    free(filenames);
+    free_filenames(filenames, count);
 }
 
 /* Main function */
@@ -607,10 +570,11 @@ int main(int argc, char *argv[])
     int option;
     int long_format = 0;
     int horizontal_format = 0;
+    int recursive_flag = 0;
     int i;
     int directory_count = 0;
 
-    while ((option = getopt(argc, argv, "lx")) != -1)
+    while ((option = getopt(argc, argv, "lxR")) != -1)
     {
         switch (option)
         {
@@ -622,9 +586,13 @@ int main(int argc, char *argv[])
                 horizontal_format = 1;
                 break;
 
+            case 'R':
+                recursive_flag = 1;
+                break;
+
             default:
                 fprintf(stderr,
-                        "Usage: %s [-l] [-x] [directory ...]\n",
+                        "Usage: %s [-l] [-x] [-R] [directory ...]\n",
                         argv[0]);
                 return 1;
         }
@@ -633,36 +601,55 @@ int main(int argc, char *argv[])
     if (optind == argc)
     {
         if (long_format)
-        {
-            do_long_ls(".");
-        }
+            do_long_ls(".", recursive_flag);
         else
-        {
-            do_ls(".", horizontal_format);
-        }
+            do_ls(".", horizontal_format, recursive_flag);
 
         return 0;
     }
 
     for (i = optind; i < argc; i++)
     {
+        struct stat st;
+
         if (directory_count > 0)
-        {
             printf("\n");
+
+        if (lstat(argv[i], &st) == -1)
+        {
+            perror(argv[i]);
+            directory_count++;
+            continue;
         }
 
-        if (argc - optind > 1)
-        {
-            printf("Directory listing of %s:\n", argv[i]);
-        }
+    if (!recursive_flag && argc - optind > 1) {
+    if (S_ISDIR(st.st_mode))
+        printf("%s:\n", argv[i]);
+}
 
-        if (long_format)
+        /*
+         * Recursive functions print their own headers.
+         * For non-recursive multiple-directory arguments,
+         * preserve the previous directory heading behavior.
+         */
+        if (recursive_flag)
         {
-            do_long_ls(argv[i]);
+            if (long_format)
+                do_long_ls(argv[i], recursive_flag);
+            else
+                do_ls(argv[i], horizontal_format, recursive_flag);
         }
         else
         {
-            do_ls(argv[i], horizontal_format);
+            if (argc - optind > 1 && S_ISDIR(st.st_mode))
+            {
+                /* The heading was printed above. */
+            }
+
+            if (long_format)
+                do_long_ls(argv[i], recursive_flag);
+            else
+                do_ls(argv[i], horizontal_format, recursive_flag);
         }
 
         directory_count++;

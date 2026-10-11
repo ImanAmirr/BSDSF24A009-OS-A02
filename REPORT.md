@@ -100,3 +100,29 @@ The project is stored on a Windows-mounted filesystem in WSL, where permission b
 
 ### Testing
 Colorized output was tested in the default listing, horizontal listing (`-x`), and long listing (`-l`). Test files included directories, ordinary files, executable shell scripts, symbolic links, and `.tar`, `.gz`, and `.zip` archives.
+
+## Feature 7: Recursive Listing (`-R`) — v1.6.0
+
+### Implementation
+
+The recursive listing feature was implemented using the `-R` command-line option. When this option is provided, the program lists the contents of the specified directory and then recursively lists the contents of its subdirectories.
+
+The program prints a directory heading before displaying its contents. It constructs the full path of each entry by combining the parent directory path with the entry name. The `lstat()` system call is used to retrieve file information, and `S_ISDIR()` identifies directories. The program skips the special entries `.` and `..` to prevent repeatedly visiting the current and parent directories.
+
+The recursive listing supports the existing display modes: default column listing, horizontal listing (`-x`), and long listing (`-l`).
+
+### Testing
+
+The program was compiled using `make clean` and `make` without errors or warnings. Recursive listing was tested using the `-R`, `-lR`, and `-xR` options.
+
+A nested directory structure was created containing files at three levels: a root test directory, a subdirectory, and a deeper subdirectory. The output correctly displayed each directory's contents under its corresponding directory heading. The long listing displayed file details at every level, while the horizontal listing preserved its formatting during recursion.
+
+### Question 1: What is the base case in recursion, and what prevents infinite recursion?
+
+The recursion stops when a directory has no subdirectories to process. The program examines each entry and recursively calls the listing function only for entries identified as directories using `lstat()` and `S_ISDIR()`. It also skips the special entries `.` and `..`, which represent the current directory and its parent directory. Skipping these entries prevents the program from repeatedly traversing the same directories and entering infinite recursion.
+
+### Question 2: Why must the full path be constructed before the recursive call? What would happen if the program called `do_ls("subdir")` from `do_ls("parent_dir")`?
+
+The full path must be constructed so that the program can locate a subdirectory relative to its parent directory. For example, if the parent directory is `parent_dir` and an entry is `subdir`, the program constructs `parent_dir/subdir` before making the recursive call.
+
+If the program called `do_ls("subdir")` instead, the operating system would interpret the path relative to the process's current working directory, not relative to `parent_dir`. The program could therefore list the wrong directory or fail to find the subdirectory. Constructing the full path ensures that recursion works correctly for nested directories and different starting paths.
