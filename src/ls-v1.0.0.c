@@ -1,7 +1,7 @@
 
 /*
- * Programming Assignment 02: ls v1.1.0
- * Long listing format using the -l option
+ * Programming Assignment 02: ls v1.2.0
+ * Column display (down then across) and long listing
  */
 
 #include <stdio.h>
@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <pwd.h>
 #include <grp.h>
 #include <time.h>
@@ -20,6 +21,7 @@ void do_ls(const char *dir);
 void do_long_ls(const char *dir);
 void print_long_entry(const char *dir, const char *name);
 void get_permissions(mode_t mode, char permissions[]);
+int get_terminal_width(void);
 
 int main(int argc, char *argv[])
 {
@@ -64,10 +66,33 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+int get_terminal_width(void)
+{
+    struct winsize window;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &window) == 0
+        && window.ws_col > 0)
+        return window.ws_col;
+
+    return 80;
+}
+
 void do_ls(const char *dir)
 {
+    DIR *dp;
     struct dirent *entry;
-    DIR *dp = opendir(dir);
+    char **filenames = NULL;
+    size_t count = 0;
+    size_t capacity = 16;
+    size_t max_length = 0;
+    size_t rows;
+    size_t columns;
+    size_t i;
+    int terminal_width;
+    size_t column_width;
+    size_t spacing = 2;
+
+    dp = opendir(dir);
 
     if (dp == NULL)
     {
@@ -76,20 +101,133 @@ void do_ls(const char *dir)
         return;
     }
 
+    filenames = malloc(capacity * sizeof(char *));
+
+    if (filenames == NULL)
+    {
+        perror("malloc");
+        closedir(dp);
+        return;
+    }
+
     errno = 0;
 
     while ((entry = readdir(dp)) != NULL)
     {
+        char *copy;
+        size_t length;
+
         if (entry->d_name[0] == '.')
             continue;
 
-        printf("%s\n", entry->d_name);
+        length = strlen(entry->d_name);
+
+        if (count == capacity)
+        {
+            size_t new_capacity = capacity * 2;
+            char **new_filenames =
+                realloc(filenames, new_capacity * sizeof(char *));
+
+            if (new_filenames == NULL)
+            {
+                perror("realloc");
+
+                for (i = 0; i < count; i++)
+                    free(filenames[i]);
+
+                free(filenames);
+                closedir(dp);
+                return;
+            }
+
+            filenames = new_filenames;
+            capacity = new_capacity;
+        }
+
+        copy = malloc(length + 1);
+
+        if (copy == NULL)
+        {
+            perror("malloc");
+
+            for (i = 0; i < count; i++)
+                free(filenames[i]);
+
+            free(filenames);
+            closedir(dp);
+            return;
+        }
+
+        strcpy(copy, entry->d_name);
+        filenames[count] = copy;
+        count++;
+
+        if (length > max_length)
+            max_length = length;
     }
 
     if (errno != 0)
         perror("readdir failed");
 
     closedir(dp);
+
+    if (count == 0)
+    {
+        free(filenames);
+        return;
+    }
+
+    terminal_width = get_terminal_width();
+    column_width = max_length + spacing;
+
+    columns = (size_t)terminal_width / column_width;
+
+    if (columns == 0)
+        columns = 1;
+
+    if (columns > count)
+        columns = count;
+
+    rows = (count + columns - 1) / columns;
+
+    /*
+     * Print down each column, then across.
+     * Index: row + column * rows
+     */
+    for (i = 0; i < rows; i++)
+    {
+        size_t column;
+
+        for (column = 0; column < columns; column++)
+        {
+            size_t index = i + column * rows;
+
+            if (index < count)
+            {
+                printf("%s", filenames[index]);
+
+                if (column + 1 < columns
+                    && index + rows < count)
+                {
+                    size_t length = strlen(filenames[index]);
+                    size_t padding = column_width - length;
+
+                    while (padding > 0)
+                    {
+                        putchar(' ');
+                        padding--;
+                    }
+                }
+            }
+        }
+
+        putchar('\n');
+    }
+
+    for (i = 0; i < count; i++)
+        free(filenames[i]);
+
+    free(filenames);
 }
 
 void do_long_ls(const char *dir)
@@ -229,4 +367,3 @@ void get_permissions(mode_t mode, char permissions[])
 
     permissions[10] = '\0';
 }
-
