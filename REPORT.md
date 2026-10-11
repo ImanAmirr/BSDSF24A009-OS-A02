@@ -77,3 +77,26 @@ The comparison function determines the order of elements during sorting. Its sig
 The arguments are `const void *` because `qsort()` is a general-purpose function that can sort arrays containing different data types. The function receives pointers to two array elements. In this program, each element is a `char *`, so the arguments are converted to pointers to filename pointers. The filenames are then compared using `strcmp()`.
 
 The function returns a negative value if the first filename comes before the second, zero if they are equal, and a positive value if the first comes after the second. The `const` qualifier indicates that the comparison function does not modify the elements being compared.
+
+
+## Feature 6: Colorized Output (v1.5.0)
+
+Colorized output was implemented to make file types easier to identify in the custom `ls` command.
+
+### Color Scheme
+- **Blue:** Directories
+- **Green:** Executable shell scripts
+- **Red:** Archive files with `.tar`, `.gz`, and `.zip` extensions
+- **Pink/Magenta:** Symbolic links
+- **Reverse video:** Special files, including devices, sockets, and FIFOs
+- **Default terminal color:** Ordinary files
+
+### Implementation
+ANSI escape codes were used to display filenames in different colors. For example, `\033[0;32m` changes the text color to green, while `\033[0m` resets the terminal color to its default.
+
+File types are identified using the `lstat()` system call and the `st_mode` field. Macros such as `S_ISDIR()` and `S_ISLNK()` identify directories and symbolic links. On Linux filesystems, executable permissions are checked using `S_IXUSR`, `S_IXGRP`, and `S_IXOTH`.
+
+The project is stored on a Windows-mounted filesystem in WSL, where permission bits may report every file as executable. To avoid incorrectly coloring ordinary files green in this environment, shell scripts are identified by their `.sh` extension.
+
+### Testing
+Colorized output was tested in the default listing, horizontal listing (`-x`), and long listing (`-l`). Test files included directories, ordinary files, executable shell scripts, symbolic links, and `.tar`, `.gz`, and `.zip` archives.
